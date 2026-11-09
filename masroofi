@@ -1,0 +1,835 @@
+import Foundation
+import SwiftData
+
+@Model
+class MoneyTransaction: Identifiable {
+    var id: UUID
+    var title: String
+    var amount: Double
+    var date: Date
+    var category: String
+    var isExpense: Bool
+
+    init(id: UUID = UUID(), title: String, amount: Double, date: Date, category: String, isExpense: Bool = true) {
+        self.id = id
+        self.title = title
+        self.amount = amount
+        self.date = date
+        self.category = category
+        self.isExpense = isExpense
+    }
+}
+
+enum TransactionCategory: String, CaseIterable, Identifiable {
+    var id: String { self.rawValue }
+    case food = "طعام ومشروبات"
+    case bills = "فواتير وخدمات"
+    case transport = "مواصلات"
+    case shopping = "تسوق"
+    case salary = "راتب / إيداع"
+    case other = "أخرى"
+}import Foundation
+
+struct ParsedBankMessage {
+    var amount: Double?
+    var merchant: String?
+    var date: Date?
+    var isExpense: Bool
+}
+
+class BankMessageParser {
+    static let shared = BankMessageParser()
+    private let formatter: NumberFormatter
+
+    private init() {
+        formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US") // لمعالجة الأرقام القياسية والإنجليزية والعربية
+    }
+    
+    func parse(message: String) -> ParsedBankMessage {
+        var amount: Double?
+        var merchant: String?
+        let lowerMsg = message.lowercased()
+        
+        // تحديد نوع العملية بدقة
+        let isExpense = !lowerMsg.contains("إيداع") && 
+                        !lowerMsg.contains("رواتب") && 
+                        !lowerMsg.contains("استرجاع") && 
+                        !lowerMsg.contains("deposit") && 
+                        !lowerMsg.contains("refund") &&
+                        !lowerMsg.contains("تحويل لحسابكم")
+        
+        // استخراج المبلغ (يدعم SAR 150 أو 150 SAR أو ر.س أو الأرقام المجردة)
+        let amountPatterns = [
+            #"(?:SAR|ر\.س|رس|USD|EUR)\s*(\d+(?:[,\.]\d{1,2})?)"#,
+            #"(\d+(?:[,\.]\d{1,2})?)\s*(?:SAR|ر\.س|رس)"#,
+            #"(?:مبلغ|بمبلغ|بقيمة|amount:?)\s*(\d+(?:[,\.]\d{1,2})?)"#
+        ]
+        
+        for pattern in amountPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let rawNum = String(message[range]).replacingOccurrences(of: ",", with: ".")
+                if let val = parseNumber(rawNum), val > 0 {
+                    amount = val
+                    break
+                }
+            }
+        }
+        
+        // استخراج اسم التجر بدقة مع حدود الكلمات \b
+        let merchantPatterns = [
+            #"\b(?:لدى|من|عند|في|at|to)\s+([^\p{Z}\n\.,]+(?:\s+[^\p{Z}\n\.,]+){0,2})"#,
+            #"(?:المتجر|التاجر|Merchant):?\s*([^\n\.,]+)"#
+        ]
+        
+        for pattern in merchantPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let extracted = String(message[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !extracted.isEmpty && extracted.count < 35 {
+                    merchant = extracted
+                    break
+                }
+            }
+        }
+        
+        return ParsedBankMessage(amount: amount, merchant: merchant, date: Date(), isExpense: isExpense)
+    }
+    
+    private func parseNumber(_ string: String) -> Double? {
+        // تحويل الأرقام العربية المشرقية (٠-٩) إلى الإنجليزية إن وجدت
+        let arabicMap = ["٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9"]
+        var processed = string
+        for (ar, en) in arabicMap {
+            processed = processed.replacingOccurrences(of: ar, with: en)
+        }
+        return Double(processed)
+    }
+}import Foundation
+
+struct ParsedBankMessage {
+    var amount: Double?
+    var merchant: String?
+    var date: Date?
+    var isExpense: Bool
+}
+
+class BankMessageParser {
+    static let shared = BankMessageParser()
+    private let formatter: NumberFormatter
+
+    private init() {
+        formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US") // لمعالجة الأرقام القياسية والإنجليزية والعربية
+    }
+    
+    func parse(message: String) -> ParsedBankMessage {
+        var amount: Double?
+        var merchant: String?
+        let lowerMsg = message.lowercased()
+        
+        // تحديد نوع العملية بدقة
+        let isExpense = !lowerMsg.contains("إيداع") && 
+                        !lowerMsg.contains("رواتب") && 
+                        !lowerMsg.contains("استرجاع") && 
+                        !lowerMsg.contains("deposit") && 
+                        !lowerMsg.contains("refund") &&
+                        !lowerMsg.contains("تحويل لحسابكم")
+        
+        // استخراج المبلغ (يدعم SAR 150 أو 150 SAR أو ر.س أو الأرقام المجردة)
+        let amountPatterns = [
+            #"(?:SAR|ر\.س|رس|USD|EUR)\s*(\d+(?:[,\.]\d{1,2})?)"#,
+            #"(\d+(?:[,\.]\d{1,2})?)\s*(?:SAR|ر\.س|رس)"#,
+            #"(?:مبلغ|بمبلغ|بقيمة|amount:?)\s*(\d+(?:[,\.]\d{1,2})?)"#
+        ]
+        
+        for pattern in amountPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let rawNum = String(message[range]).replacingOccurrences(of: ",", with: ".")
+                if let val = parseNumber(rawNum), val > 0 {
+                    amount = val
+                    break
+                }
+            }
+        }
+        
+        // استخراج اسم التجر بدقة مع حدود الكلمات \b
+        let merchantPatterns = [
+            #"\b(?:لدى|من|عند|في|at|to)\s+([^\p{Z}\n\.,]+(?:\s+[^\p{Z}\n\.,]+){0,2})"#,
+            #"(?:المتجر|التاجر|Merchant):?\s*([^\n\.,]+)"#
+        ]
+        
+        for pattern in merchantPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let extracted = String(message[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !extracted.isEmpty && extracted.count < 35 {
+                    merchant = extracted
+                    break
+                }
+            }
+        }
+        
+        return ParsedBankMessage(amount: amount, merchant: merchant, date: Date(), isExpense: isExpense)
+    }
+    
+    private func parseNumber(_ string: String) -> Double? {
+        // تحويل الأرقام العربية المشرقية (٠-٩) إلى الإنجليزية إن وجدت
+        let arabicMap = ["٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9"]
+        var processed = string
+        for (ar, en) in arabicMap {
+            processed = processed.replacingOccurrences(of: ar, with: en)
+        }
+        return Double(processed)
+    }
+}import Foundation
+
+struct ParsedBankMessage {
+    var amount: Double?
+    var merchant: String?
+    var date: Date?
+    var isExpense: Bool
+}
+
+class BankMessageParser {
+    static let shared = BankMessageParser()
+    private let formatter: NumberFormatter
+
+    private init() {
+        formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US") // لمعالجة الأرقام القياسية والإنجليزية والعربية
+    }
+    
+    func parse(message: String) -> ParsedBankMessage {
+        var amount: Double?
+        var merchant: String?
+        let lowerMsg = message.lowercased()
+        
+        // تحديد نوع العملية بدقة
+        let isExpense = !lowerMsg.contains("إيداع") && 
+                        !lowerMsg.contains("رواتب") && 
+                        !lowerMsg.contains("استرجاع") && 
+                        !lowerMsg.contains("deposit") && 
+                        !lowerMsg.contains("refund") &&
+                        !lowerMsg.contains("تحويل لحسابكم")
+        
+        // استخراج المبلغ (يدعم SAR 150 أو 150 SAR أو ر.س أو الأرقام المجردة)
+        let amountPatterns = [
+            #"(?:SAR|ر\.س|رس|USD|EUR)\s*(\d+(?:[,\.]\d{1,2})?)"#,
+            #"(\d+(?:[,\.]\d{1,2})?)\s*(?:SAR|ر\.س|رس)"#,
+            #"(?:مبلغ|بمبلغ|بقيمة|amount:?)\s*(\d+(?:[,\.]\d{1,2})?)"#
+        ]
+        
+        for pattern in amountPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let rawNum = String(message[range]).replacingOccurrences(of: ",", with: ".")
+                if let val = parseNumber(rawNum), val > 0 {
+                    amount = val
+                    break
+                }
+            }
+        }
+        
+        // استخراج اسم التجر بدقة مع حدود الكلمات \b
+        let merchantPatterns = [
+            #"\b(?:لدى|من|عند|في|at|to)\s+([^\p{Z}\n\.,]+(?:\s+[^\p{Z}\n\.,]+){0,2})"#,
+            #"(?:المتجر|التاجر|Merchant):?\s*([^\n\.,]+)"#
+        ]
+        
+        for pattern in merchantPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: message, options: [], range: NSRange(location: 0, length: message.utf16.count)),
+               let range = Range(match.range(at: 1), in: message) {
+                let extracted = String(message[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !extracted.isEmpty && extracted.count < 35 {
+                    merchant = extracted
+                    break
+                }
+            }
+        }
+        
+        return ParsedBankMessage(amount: amount, merchant: merchant, date: Date(), isExpense: isExpense)
+    }
+    
+    private func parseNumber(_ string: String) -> Double? {
+        // تحويل الأرقام العربية المشرقية (٠-٩) إلى الإنجليزية إن وجدت
+        let arabicMap = ["٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9"]
+        var processed = string
+        for (ar, en) in arabicMap {
+            processed = processed.replacingOccurrences(of: ar, with: en)
+        }
+        return Double(processed)
+    }
+}import SwiftUI
+import SwiftData
+
+struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \MoneyTransaction.date, order: .reverse) private var transactions: [MoneyTransaction]
+    
+    @State private var showingAddView = false
+    @State private var showingImportView = false
+    @State private var showingBudgetSettings = false
+    @State private var showingAnalytics = false
+    
+    @AppStorage("monthlyBudget") private var monthlyBudget: Double = 5000.0
+
+    // فلترة المصروفات الخاصة بالشهر الحالي فقط
+    var currentMonthExpenses: [MoneyTransaction] {
+        let calendar = Calendar.current
+        let now = Date()
+        return transactions.filter { t in
+            t.isExpense && calendar.isDate(t.date, equalTo: now, toGranularity: .month)
+        }
+    }
+
+    var totalMonthlyExpense: Double {
+        currentMonthExpenses.reduce(0) { $0 + $1.amount }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                BudgetSummaryCard(totalExpense: totalMonthlyExpense, monthlyBudget: monthlyBudget)
+                    .padding()
+                    .onTapGesture {
+                        showingBudgetSettings.toggle()
+                    }
+
+                List {
+                    Section(header: Text("معاملات الشهر الحالي")) {
+                        if currentMonthExpenses.isEmpty {
+                            Text("لا توجد مصروفات مسجلة لهذا الشهر حتى الآن.")
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(transactions) { transaction in // تعرض الكل أو currentMonthExpenses حسب رغبتك
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(transaction.title)
+                                            .font(.headline)
+                                        Text(transaction.category)
+                                            .font(.caption2)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.blue.opacity(0.1))
+                                            .foregroundColor(.blue)
+                                            .cornerRadius(4)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        Text(transaction.amount, format: .currency(code: "SAR"))
+                                            .font(.subheadline)
+                                            .bold()
+                                            .foregroundColor(transaction.isExpense ? .red : .green)
+                                        Text(transaction.date, style: .date)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .onDelete(perform: deleteTransactions)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("مصروفي")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: { showingAddView.toggle() }) {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: { showingImportView.toggle() }) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                        }
+                        Button(action: { showingAnalytics.toggle() }) {
+                            Image(systemName: "chart.pie.fill")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddView) { AddTransactionView() }
+            .sheet(isPresented: $showingImportView) { ImportMessageView() }
+            .sheet(isPresented: $showingBudgetSettings) { BudgetSettingsView(monthlyBudget: $monthlyBudget) }
+            .sheet(isPresented: $showingAnalytics) { AnalyticsView() }
+        }
+    }
+
+    private func deleteTransactions(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(transactions[index])
+            }
+        }
+    }
+}
+
+struct BudgetSummaryCard: View {
+    var totalExpense: Double
+    var monthlyBudget: Double
+
+    var progress: Double {
+        guard monthlyBudget > 0 else { return 0 }
+        return min(totalExpense / monthlyBudget, 1.0)
+    }
+
+    var isExceeded: Bool {
+        totalExpense > monthlyBudget
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("المصروفات الشهرية")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                    Text("\(totalExpense, format: .currency(code: "SAR")) / \(monthlyBudget, format: .currency(code: "SAR"))")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                Spacer()
+                Image(systemName: isExceeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundColor(isExceeded ? .yellow : .white)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 8).cornerRadius(4)
+                    Rectangle().fill(isExceeded ? Color.yellow : Color.white)
+                        .frame(width: geometry.size.width * CGFloat(progress), height: 8).cornerRadius(4)
+                }
+            }
+            .frame(height: 8)
+
+            if isExceeded {
+                Text("⚠️ تنبيه: لقد تجاوزت ميزانية هذا الشهر!")
+                    .font(.caption).bold().foregroundColor(.yellow)
+            } else {
+                Text("المتبقي لشهرك: \((monthlyBudget - totalExpense), format: .currency(code: "SAR"))")
+                    .font(.caption).foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .padding()
+        .background(isExceeded ? Color.red.opacity(0.9) : Color.accentColor)
+        .cornerRadius(16)
+    }
+}
+
+struct BudgetSettingsView: View {
+    @Binding var monthlyBudget: Double
+    @Environment(\.dismiss) private var dismiss
+    @State private var tempBudget: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("حدد الميزانية الشهرية الجديدة")) {
+                    TextField("الميزانية", text: $tempBudget)
+                        .keyboardType(.decimalPad)
+                        .onAppear { tempBudget = "\(Int(monthlyBudget))" }
+                }
+            }
+            .navigationTitle("إعدادات الميزانية")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("حفظ") {
+                        let clean = tempBudget.replacingOccurrences(of: ",", with: ".")
+                        if let val = Double(clean) {
+                            monthlyBudget = val
+                        }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
+            }
+        }
+    }
+}import SwiftUI
+import SwiftData
+
+struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \MoneyTransaction.date, order: .reverse) private var transactions: [MoneyTransaction]
+    
+    @State private var showingAddView = false
+    @State private var showingImportView = false
+    @State private var showingBudgetSettings = false
+    @State private var showingAnalytics = false
+    
+    @AppStorage("monthlyBudget") private var monthlyBudget: Double = 5000.0
+
+    // فلترة المصروفات الخاصة بالشهر الحالي فقط
+    var currentMonthExpenses: [MoneyTransaction] {
+        let calendar = Calendar.current
+        let now = Date()
+        return transactions.filter { t in
+            t.isExpense && calendar.isDate(t.date, equalTo: now, toGranularity: .month)
+        }
+    }
+
+    var totalMonthlyExpense: Double {
+        currentMonthExpenses.reduce(0) { $0 + $1.amount }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                BudgetSummaryCard(totalExpense: totalMonthlyExpense, monthlyBudget: monthlyBudget)
+                    .padding()
+                    .onTapGesture {
+                        showingBudgetSettings.toggle()
+                    }
+
+                List {
+                    Section(header: Text("معاملات الشهر الحالي")) {
+                        if currentMonthExpenses.isEmpty {
+                            Text("لا توجد مصروفات مسجلة لهذا الشهر حتى الآن.")
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(transactions) { transaction in // تعرض الكل أو currentMonthExpenses حسب رغبتك
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(transaction.title)
+                                            .font(.headline)
+                                        Text(transaction.category)
+                                            .font(.caption2)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.blue.opacity(0.1))
+                                            .foregroundColor(.blue)
+                                            .cornerRadius(4)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        Text(transaction.amount, format: .currency(code: "SAR"))
+                                            .font(.subheadline)
+                                            .bold()
+                                            .foregroundColor(transaction.isExpense ? .red : .green)
+                                        Text(transaction.date, style: .date)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .onDelete(perform: deleteTransactions)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("مصروفي")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: { showingAddView.toggle() }) {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: { showingImportView.toggle() }) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                        }
+                        Button(action: { showingAnalytics.toggle() }) {
+                            Image(systemName: "chart.pie.fill")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddView) { AddTransactionView() }
+            .sheet(isPresented: $showingImportView) { ImportMessageView() }
+            .sheet(isPresented: $showingBudgetSettings) { BudgetSettingsView(monthlyBudget: $monthlyBudget) }
+            .sheet(isPresented: $showingAnalytics) { AnalyticsView() }
+        }
+    }
+
+    private func deleteTransactions(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(transactions[index])
+            }
+        }
+    }
+}
+
+struct BudgetSummaryCard: View {
+    var totalExpense: Double
+    var monthlyBudget: Double
+
+    var progress: Double {
+        guard monthlyBudget > 0 else { return 0 }
+        return min(totalExpense / monthlyBudget, 1.0)
+    }
+
+    var isExceeded: Bool {
+        totalExpense > monthlyBudget
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("المصروفات الشهرية")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                    Text("\(totalExpense, format: .currency(code: "SAR")) / \(monthlyBudget, format: .currency(code: "SAR"))")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                Spacer()
+                Image(systemName: isExceeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundColor(isExceeded ? .yellow : .white)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 8).cornerRadius(4)
+                    Rectangle().fill(isExceeded ? Color.yellow : Color.white)
+                        .frame(width: geometry.size.width * CGFloat(progress), height: 8).cornerRadius(4)
+                }
+            }
+            .frame(height: 8)
+
+            if isExceeded {
+                Text("⚠️ تنبيه: لقد تجاوزت ميزانية هذا الشهر!")
+                    .font(.caption).bold().foregroundColor(.yellow)
+            } else {
+                Text("المتبقي لشهرك: \((monthlyBudget - totalExpense), format: .currency(code: "SAR"))")
+                    .font(.caption).foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .padding()
+        .background(isExceeded ? Color.red.opacity(0.9) : Color.accentColor)
+        .cornerRadius(16)
+    }
+}
+
+struct BudgetSettingsView: View {
+    @Binding var monthlyBudget: Double
+    @Environment(\.dismiss) private var dismiss
+    @State private var tempBudget: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("حدد الميزانية الشهرية الجديدة")) {
+                    TextField("الميزانية", text: $tempBudget)
+                        .keyboardType(.decimalPad)
+                        .onAppear { tempBudget = "\(Int(monthlyBudget))" }
+                }
+            }
+            .navigationTitle("إعدادات الميزانية")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("حفظ") {
+                        let clean = tempBudget.replacingOccurrences(of: ",", with: ".")
+                        if let val = Double(clean) {
+                            monthlyBudget = val
+                        }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
+            }
+        }
+    }
+}import SwiftUI
+import SwiftData
+
+struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \MoneyTransaction.date, order: .reverse) private var transactions: [MoneyTransaction]
+    
+    @State private var showingAddView = false
+    @State private var showingImportView = false
+    @State private var showingBudgetSettings = false
+    @State private var showingAnalytics = false
+    
+    @AppStorage("monthlyBudget") private var monthlyBudget: Double = 5000.0
+
+    // فلترة المصروفات الخاصة بالشهر الحالي فقط
+    var currentMonthExpenses: [MoneyTransaction] {
+        let calendar = Calendar.current
+        let now = Date()
+        return transactions.filter { t in
+            t.isExpense && calendar.isDate(t.date, equalTo: now, toGranularity: .month)
+        }
+    }
+
+    var totalMonthlyExpense: Double {
+        currentMonthExpenses.reduce(0) { $0 + $1.amount }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                BudgetSummaryCard(totalExpense: totalMonthlyExpense, monthlyBudget: monthlyBudget)
+                    .padding()
+                    .onTapGesture {
+                        showingBudgetSettings.toggle()
+                    }
+
+                List {
+                    Section(header: Text("معاملات الشهر الحالي")) {
+                        if currentMonthExpenses.isEmpty {
+                            Text("لا توجد مصروفات مسجلة لهذا الشهر حتى الآن.")
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(transactions) { transaction in // تعرض الكل أو currentMonthExpenses حسب رغبتك
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(transaction.title)
+                                            .font(.headline)
+                                        Text(transaction.category)
+                                            .font(.caption2)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.blue.opacity(0.1))
+                                            .foregroundColor(.blue)
+                                            .cornerRadius(4)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        Text(transaction.amount, format: .currency(code: "SAR"))
+                                            .font(.subheadline)
+                                            .bold()
+                                            .foregroundColor(transaction.isExpense ? .red : .green)
+                                        Text(transaction.date, style: .date)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .onDelete(perform: deleteTransactions)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("مصروفي")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: { showingAddView.toggle() }) {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: { showingImportView.toggle() }) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                        }
+                        Button(action: { showingAnalytics.toggle() }) {
+                            Image(systemName: "chart.pie.fill")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddView) { AddTransactionView() }
+            .sheet(isPresented: $showingImportView) { ImportMessageView() }
+            .sheet(isPresented: $showingBudgetSettings) { BudgetSettingsView(monthlyBudget: $monthlyBudget) }
+            .sheet(isPresented: $showingAnalytics) { AnalyticsView() }
+        }
+    }
+
+    private func deleteTransactions(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(transactions[index])
+            }
+        }
+    }
+}
+
+struct BudgetSummaryCard: View {
+    var totalExpense: Double
+    var monthlyBudget: Double
+
+    var progress: Double {
+        guard monthlyBudget > 0 else { return 0 }
+        return min(totalExpense / monthlyBudget, 1.0)
+    }
+
+    var isExceeded: Bool {
+        totalExpense > monthlyBudget
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("المصروفات الشهرية")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                    Text("\(totalExpense, format: .currency(code: "SAR")) / \(monthlyBudget, format: .currency(code: "SAR"))")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                Spacer()
+                Image(systemName: isExceeded ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundColor(isExceeded ? .yellow : .white)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(height: 8).cornerRadius(4)
+                    Rectangle().fill(isExceeded ? Color.yellow : Color.white)
+                        .frame(width: geometry.size.width * CGFloat(progress), height: 8).cornerRadius(4)
+                }
+            }
+            .frame(height: 8)
+
+            if isExceeded {
+                Text("⚠️ تنبيه: لقد تجاوزت ميزانية هذا الشهر!")
+                    .font(.caption).bold().foregroundColor(.yellow)
+            } else {
+                Text("المتبقي لشهرك: \((monthlyBudget - totalExpense), format: .currency(code: "SAR"))")
+                    .font(.caption).foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .padding()
+        .background(isExceeded ? Color.red.opacity(0.9) : Color.accentColor)
+        .cornerRadius(16)
+    }
+}
+
+struct BudgetSettingsView: View {
+    @Binding var monthlyBudget: Double
+    @Environment(\.dismiss) private var dismiss
+    @State private var tempBudget: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("حدد الميزانية الشهرية الجديدة")) {
+                    TextField("الميزانية", text: $tempBudget)
+                        .keyboardType(.decimalPad)
+                        .onAppear { tempBudget = "\(Int(monthlyBudget))" }
+                }
+            }
+            .navigationTitle("إعدادات الميزانية")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("حفظ") {
+                        let clean = tempBudget.replacingOccurrences(of: ",", with: ".")
+                        if let val = Double(clean) {
+                            monthlyBudget = val
+                        }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
+            }
+        }
+    }
+}
